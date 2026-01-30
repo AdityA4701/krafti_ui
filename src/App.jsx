@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Upload, Sparkles, FileText, BadgeDollarSign, User, Menu, X } from 'lucide-react';
+import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import Auth from './pages/Auth';
 import './App.css';
 
-function App() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-
+function Home() {
   return (
     <div className="app">
       <header className="header">
@@ -13,7 +13,9 @@ function App() {
             <div className="logo-icon">K</div>
             <span>Krafti</span>
           </div>
-          <button className="sign-in-btn">Sign In</button>
+          <Link to="/auth">
+            <button className="sign-in-btn">Sign In</button>
+          </Link>
         </div>
       </header>
 
@@ -32,9 +34,6 @@ function App() {
             Upload your craft photo and get back professionally enhanced images,
             AI-generated descriptions, and smart price recommendations.
           </p>
-
-
-
         </section>
 
         <section className="upload-section">
@@ -96,6 +95,17 @@ function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/auth" element={<Auth />} />
+      </Routes>
+    </Router>
   );
 }
 
