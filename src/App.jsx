@@ -91,7 +91,9 @@ function Home() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to process image');
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.detail || await response.text() || 'Failed to process image';
+        throw new Error(`Server Error (${response.status}): ${errorMessage}`);
       }
 
       const data = await response.json();
