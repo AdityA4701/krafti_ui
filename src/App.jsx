@@ -6,7 +6,7 @@ import { auth } from './firebase';
 import Auth from './pages/Auth';
 import './App.css';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = '';
 
 function Home() {
   const [user, setUser] = useState(null);
