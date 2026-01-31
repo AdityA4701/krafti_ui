@@ -162,15 +162,34 @@ async def process_image(file: UploadFile = File(...)):
             
             print(f"Requesting Pixelcut with prompt: {bg_gen_prompt}")
             
-            # Prepare using Base64 Data URI (Safer for APIs expecting URLs)
-            # Some APIs accept data:image/... as a URL
-            img_b64 = image_to_base64(original_image, "PNG")
-            data_uri = f"data:image/png;base64,{img_b64}"
+            # Prepare image buffer
+            img_byte_arr = io.BytesIO()
+            original_image.save(img_byte_arr, format='PNG')
+            img_byte_arr.seek(0)
             
+            # WORKAROUND: Pixelcut requires a public URL. 
+            # We use file.io for a temporary, one-time public link.
+            print("Uploading to temporary host (file.io) to get a public URL...")
+            try:
+                files_io = {"file": ("image.png", img_byte_arr, "image/png")}
+                io_resp = requests.post("https://file.io?expires=1d", files=files_io)
+                
+                if io_resp.status_code == 200:
+                    public_img_url = io_resp.json().get("link")
+                    print(f"File.io Link: {public_img_url}")
+                else:
+                    print(f"File.io failed: {io_resp.text}")
+                    # Fallback to previous data URI method just in case, though it likely failed
+                    img_b64 = image_to_base64(original_image, "PNG")
+                    public_img_url = f"data:image/png;base64,{img_b64}"
+            except Exception as e_io:
+                 print(f"File.io upload exception: {e_io}")
+                 raise Exception("Failed to create public URL for image")
+
             url = "https://api.developer.pixelcut.ai/v1/generate-background"
             
             payload = {
-                "image_url": data_uri,
+                "image_url": public_img_url,
                 "prompt": bg_gen_prompt,
                 "format": "jpeg"
             }
