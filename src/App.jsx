@@ -6,9 +6,7 @@ import { auth } from './firebase';
 import Auth from './pages/Auth';
 import './App.css';
 
-const API_URL = import.meta.env.MODE === 'development'
-  ? ''
-  : 'https://krafti-backend.onrender.com';
+const API_URL = 'https://krafti-backend.onrender.com';
 
 function Home() {
   const [user, setUser] = useState(null);

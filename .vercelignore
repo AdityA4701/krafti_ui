@@ -1,0 +1,8 @@
+# Ignore backend files for Vercel Build (Frontend Only)
+backend/
+api/
+requirements.txt
+*.py
+__pycache__/
+venv/
+.venv/
