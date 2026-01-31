@@ -26,11 +26,11 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Configure Groq API
+from groq import Groq
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Remove.bg API
-REMOVEBG_API_KEY = os.getenv("REMOVEBG_API_KEY")
+
 
 app = FastAPI(title="Krafti API", version="1.0.0")
 
@@ -91,13 +91,17 @@ async def process_image(file: UploadFile = File(...)):
         # Optimization: We SKIP explicit RemoveBG step to save time (Vercel 10s timeout).
         # Pixelcut API automatically removes background if we send the product image.
         
-        # Step 1: Generate description and background prompt using Gemini
-        print("Starting Gemini analysis...")
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # Step 1: Generate description and attributes using Groq (Llama Vision)
+        print("Starting Groq Vision analysis...")
         
-        # Convert image for Gemini (it accepts PIL Image directly)
-        description_image = original_image.convert("RGB")
-        
+        # Prepare image for Groq (needs base64 data URI)
+        # Resize if too large to save tokens/latency
+        max_size = (1024, 1024)
+        groq_image = original_image.copy()
+        groq_image.thumbnail(max_size)
+        img_b64_str = image_to_base64(groq_image, "JPEG")
+        data_url = f"data:image/jpeg;base64,{img_b64_str}"
+
         # Using structured prompt for better results
         analysis_prompt = (
             "Analyze this handmade craft product image and generate a JSON response containing:\n"
@@ -109,20 +113,35 @@ async def process_image(file: UploadFile = File(...)):
             "   - 'size': One of ['small', 'medium', 'large'] (Estimate based on standard object sizes)\n"
             "   - 'quality': One of ['basic', 'handmade', 'premium', 'artisan'] (Assess visual intricacy)\n"
             "\n"
-            "Output MUST be valid JSON only. No markdown formatting."
+            "Output MUST be valid JSON only. No markdown formatting. Do not output explanations."
         )
 
         try:
-            # Run Gemini in thread
-            response = model.generate_content([analysis_prompt, description_image])
-            analysis_text = response.text.strip()
-            # Clean up markdown code blocks if present
-            if analysis_text.startswith("```json"):
-                analysis_text = analysis_text[7:]
-            if analysis_text.endswith("```"):
-                analysis_text = analysis_text[:-3]
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": analysis_prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": data_url,
+                                },
+                            },
+                        ],
+                    }
+                ],
+                model="llama-3.2-11b-vision-preview",
+                temperature=0.5,
+                max_tokens=1024,
+                top_p=1,
+                stream=False,
+                response_format={"type": "json_object"},
+            )
             
-            print("Received JSON analysis from Gemini.")
+            analysis_text = chat_completion.choices[0].message.content
+            print("Received JSON analysis from Groq.")
             
             import json
             data = json.loads(analysis_text.strip())
@@ -131,8 +150,8 @@ async def process_image(file: UploadFile = File(...)):
             bg_prompt_text = data.get("background_prompt", "minimalist professional studio background")
             attributes = data.get("attributes", {})
             
-        except Exception as e_gemini:
-            print(f"Gemini Analysis Failed: {e_gemini}")
+        except Exception as e_groq:
+            print(f"Groq Analysis Failed: {e_groq}")
             description = "Handmade craft product (Analysis failed)."
             bg_prompt_text = "minimalist professional studio background"
             attributes = {}
