@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 import google.generativeai as genai
-from rembg import remove # Local background removal
+
 
 # Import from SAME directory (api.price_estimator)
 # When running in Vercel, this file is the entry point
@@ -148,81 +148,32 @@ async def process_image(file: UploadFile = File(...)):
 
         # Step 2: Generate Background Image using Pixelcut API
         # We pass the ORIGINAL image. Pixelcut removes background and composites.
-        # Strategy: Local Rembg + Freepik Text-to-Image Composite
-        # This avoids the need for public URLs (0x0.st) entirely.
-        print("Starting Strategy: Local Rembg + Freepik Composite")
+        # Strategy: Direct Remove.bg API (Simplest, Most Robust)
+        # No complex hosting, no heavy libraries, just a clean API call.
+        print("Using Remove.bg API...")
         
         try:
-            # 1. Remove Background Locally (rembg)
-            print("Removing background locally...")
+            # 1. Remove Background
             img_byte_arr = io.BytesIO()
             original_image.save(img_byte_arr, format='PNG')
             img_bytes = img_byte_arr.getvalue()
             
-            no_bg_bytes = remove(img_bytes) # rembg library
+            # Using the helper function defined above which uses the API key from env
+            no_bg_bytes = remove_background_api(img_bytes)
+            
             no_bg_image = Image.open(io.BytesIO(no_bg_bytes)).convert("RGBA")
             
-            # 2. Generate Background Texture using Freepik API (Text-to-Image)
-            # We don't upload the product, we just ask for a background.
-            print("Generating background texture via Freepik...")
-            freepik_key = "FPSX9478529f74361bb6d9d64e891a989728" # Hardcoded as requested
+            # 2. Add Professional White Background
+            # This is standard for e-commerce and always looks good
+            white_bg = Image.new("RGBA", no_bg_image.size, "WHITE")
+            final_image = Image.alpha_composite(white_bg, no_bg_image).convert("RGB")
             
-            # Simple prompt for background
-            bg_prompt_clean = bg_prompt_text.replace("product", "").replace("background", "").strip()
-            texture_prompt = f"product photography background, {bg_prompt_clean}, empty, podium, soft lighting, 8k, high quality"
-            
-            url = "https://api.freepik.com/v1/ai/text-to-image"
-            payload = {
-                "prompt": texture_prompt,
-                "num_images": 1,
-                "image_size": "square_1_1" # or similar
-            }
-            headers = {
-                "x-freepik-api-key": freepik_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            
-            # Note: If Freepik T2I fails or is different, we fallback to colored BG
-            generated_bg = None
-            try:
-                resp = requests.post(url, headers=headers, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # Parse Freepik response (assuming list of images in base64 or url)
-                    # Often it's "data": [{"base64": ...}] or similar
-                    # Let's handle standard response types
-                    if "data" in data and len(data["data"]) > 0:
-                        img_data = data["data"][0]
-                        if "base64" in img_data:
-                            bg_bytes = base64.b64decode(img_data["base64"])
-                            generated_bg = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
-                        elif "url" in img_data:
-                            bg_resp = requests.get(img_data["url"])
-                            generated_bg = Image.open(io.BytesIO(bg_resp.content)).convert("RGBA")
-            except Exception as e_freepik:
-                print(f"Freepik T2I failed: {e_freepik}")
-                # Fallback to simple gradient or white if generation fails
-            
-            if not generated_bg:
-                # Fallback Background (White/Grey)
-                print("Using fallback white background")
-                generated_bg = Image.new("RGBA", no_bg_image.size, (245, 245, 245, 255))
-            
-            # 3. Composite
-            # Resize background to match product
-            generated_bg = generated_bg.resize(no_bg_image.size, Image.Resampling.LANCZOS)
-            
-            # Center product?
-            # For now, just composite directly (assuming centered input)
-            final_image = Image.alpha_composite(generated_bg, no_bg_image).convert("RGB")
+            description += " (Enhanced with professional studio background)"
             
         except Exception as e_process:
-            print(f"Processing failed: {e_process}")
-            # Ultimate Fallback: Return Original
+            print(f"Background removal failed: {e_process}")
+            # Fallback to original image if even Remove.bg fails
             final_image = original_image.convert("RGB")
-            # Or raise if we want to debug
-            # raise HTTPException(status_code=500, detail=str(e_process))
 
         # Convert processed image to base64
         processed_image_b64 = image_to_base64(final_image, "JPEG")

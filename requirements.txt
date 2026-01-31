@@ -7,4 +7,4 @@ groq
 Pillow
 python-dotenv
 
-rembg
+
