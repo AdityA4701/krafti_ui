@@ -98,53 +98,44 @@ async def process_image(file: UploadFile = File(...)):
         # Convert image for Gemini (it accepts PIL Image directly)
         description_image = original_image.convert("RGB")
         
-        # Using simple string concatenation to avoid syntax errors in tool writing
+        # Using structured prompt for better results
         analysis_prompt = (
-            "Analyze this handmade craft product image and generate:\n"
-            "1. A brief e-commerce description (2-3 sentences).\n"
-            "2. A short, specific prompt to generate a matching professional background for this product (e.g. 'marble table', 'wooden desk', 'soft fabric').\n"
+            "Analyze this handmade craft product image and generate a JSON response containing:\n"
+            "1. 'description': A persuasive, high-quality e-commerce product description (2-3 sentences) that highlights craftsmanship, materials, and emotional appeal. Use selling language.\n"
+            "2. 'background_prompt': A short, specific prompt for a professional background (e.g. 'marble table', 'wooden desk').\n"
+            "3. 'attributes': A dictionary with the following keys:\n"
+            "   - 'category': One of ['jewelry', 'home_decor', 'clothing', 'art', 'pottery', 'other']\n"
+            "   - 'material': One of ['fabric', 'wood', 'metal', 'ceramic', 'paper', 'mixed', 'unknown']\n"
+            "   - 'size': One of ['small', 'medium', 'large'] (Estimate based on standard object sizes)\n"
+            "   - 'quality': One of ['basic', 'handmade', 'premium', 'artisan'] (Assess visual intricacy)\n"
             "\n"
-            "Format:\n"
-            "Description: [Description]\n"
-            "Background Prompt: [Prompt]"
+            "Output MUST be valid JSON only. No markdown formatting."
         )
 
         try:
-            # Run Gemini in thread to avoid blocking event loop
+            # Run Gemini in thread
             response = model.generate_content([analysis_prompt, description_image])
             analysis_text = response.text.strip()
-            print("Received analysis from Gemini.")
+            # Clean up markdown code blocks if present
+            if analysis_text.startswith("```json"):
+                analysis_text = analysis_text[7:]
+            if analysis_text.endswith("```"):
+                analysis_text = analysis_text[:-3]
+            
+            print("Received JSON analysis from Gemini.")
+            
+            import json
+            data = json.loads(analysis_text.strip())
+            
+            description = data.get("description", "Handmade craft product.")
+            bg_prompt_text = data.get("background_prompt", "minimalist professional studio background")
+            attributes = data.get("attributes", {})
+            
         except Exception as e_gemini:
             print(f"Gemini Analysis Failed: {e_gemini}")
-            analysis_text = ""
-            # Fallback values
-        
-        # Parse description and background prompt
-        description = "Handmade craft product."
-        bg_prompt_text = "minimalist professional studio background, soft lighting, 4k"
-        
-        if analysis_text:
-            try:
-                # Use splitlines for safer parsing
-                lines = analysis_text.splitlines()
-                desc_lines = []
-                capture_desc = False
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith("Description:"):
-                        capture_desc = True
-                        desc_lines.append(line.replace("Description:", "").strip())
-                    elif line.startswith("Background Prompt:"):
-                        capture_desc = False
-                        bg_prompt_text = line.replace("Background Prompt:", "").strip()
-                    elif capture_desc:
-                        desc_lines.append(line)
-                
-                if desc_lines:
-                    description = " ".join(desc_lines).strip()
-            except:
-                print("Failed to parse specific sections, using raw text.")
-                description = analysis_text
+            description = "Handmade craft product (Analysis failed)."
+            bg_prompt_text = "minimalist professional studio background"
+            attributes = {}
 
         # Step 2: Generate Background Image using Pixelcut API
         # We pass the ORIGINAL image. Pixelcut removes background and composites.
@@ -178,8 +169,21 @@ async def process_image(file: UploadFile = File(...)):
         # Convert processed image to base64
         processed_image_b64 = image_to_base64(final_image, "JPEG")
         
-        # Step 3: Extract keywords and calculate price
-        price_factors = parse_keywords_from_description(description)
+        # Step 3: Calculate price using AI-extracted attributes
+        # Map Gemini attributes to PriceFactors keys if needed, but they should match
+        price_factors = {
+            "size": attributes.get("size", "medium").lower(),
+            "material": attributes.get("material", "mixed").lower(),
+            "quality": attributes.get("quality", "handmade").lower(),
+            "category": attributes.get("category", "other").lower()
+        }
+        
+        # Ensure regex fallback if attributes are missing/empty (e.g. Gemini failure)
+        if not price_factors["category"] or price_factors["category"] == "unknown":
+             from api.price_estimator import parse_keywords_from_description
+             # Fallback to regex parsing if AI didn't give good tags
+             price_factors = parse_keywords_from_description(description)
+             
         min_price, max_price, confidence = calculate_price_range(price_factors)
         
         return JSONResponse({
