@@ -6,3 +6,5 @@ google-generativeai
 groq
 Pillow
 python-dotenv
+
+rembg

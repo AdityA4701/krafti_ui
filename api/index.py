@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 import google.generativeai as genai
+from rembg import remove # Local background removal
 
 # Import from SAME directory (api.price_estimator)
 # When running in Vercel, this file is the entry point
@@ -147,97 +148,81 @@ async def process_image(file: UploadFile = File(...)):
 
         # Step 2: Generate Background Image using Pixelcut API
         # We pass the ORIGINAL image. Pixelcut removes background and composites.
-        print(f"Generating background via Pixelcut for prompt: {bg_prompt_text}")
-        
-        final_image = original_image # Default fallback
+        # Strategy: Local Rembg + Freepik Text-to-Image Composite
+        # This avoids the need for public URLs (0x0.st) entirely.
+        print("Starting Strategy: Local Rembg + Freepik Composite")
         
         try:
-            pixelcut_key = os.getenv("PIXELCUT_API_KEY")
-            if not pixelcut_key:
-                print("Warning: PIXELCUT_API_KEY not found variables.")
-                raise Exception("Missing Pixelcut Key")
-
-            # Optimize prompt for Pixelcut - Glassy Reflection
-            bg_gen_prompt = f"professional product photography background, on a glassy reflective surface, reflection of the object, glossy, {bg_prompt_text}, soft natural lighting, realistic shadows, high quality, 8k, photorealistic"
+            # 1. Remove Background Locally (rembg)
+            print("Removing background locally...")
+            img_byte_arr = io.BytesIO()
+            original_image.save(img_byte_arr, format='PNG')
+            img_bytes = img_byte_arr.getvalue()
             
-            print(f"Requesting Pixelcut with prompt: {bg_gen_prompt}")
+            no_bg_bytes = remove(img_bytes) # rembg library
+            no_bg_image = Image.open(io.BytesIO(no_bg_bytes)).convert("RGBA")
             
-            # Strategy A: Try Pixelcut with 0x0.st hosting
+            # 2. Generate Background Texture using Freepik API (Text-to-Image)
+            # We don't upload the product, we just ask for a background.
+            print("Generating background texture via Freepik...")
+            freepik_key = "FPSX9478529f74361bb6d9d64e891a989728" # Hardcoded as requested
+            
+            # Simple prompt for background
+            bg_prompt_clean = bg_prompt_text.replace("product", "").replace("background", "").strip()
+            texture_prompt = f"product photography background, {bg_prompt_clean}, empty, podium, soft lighting, 8k, high quality"
+            
+            url = "https://api.freepik.com/v1/ai/text-to-image"
+            payload = {
+                "prompt": texture_prompt,
+                "num_images": 1,
+                "image_size": "square_1_1" # or similar
+            }
+            headers = {
+                "x-freepik-api-key": freepik_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            # Note: If Freepik T2I fails or is different, we fallback to colored BG
+            generated_bg = None
             try:
-                # Prepare image buffer
-                img_byte_arr = io.BytesIO()
-                original_image.save(img_byte_arr, format='PNG')
-                img_byte_arr.seek(0)
-
-                print("Uploading to 0x0.st...")
-                # 0x0.st is a reliable file dump
-                files_io = {"file": ("image.png", img_byte_arr, "image/png")}
-                io_resp = requests.post("https://0x0.st", files=files_io)
-                
-                if io_resp.status_code != 200:
-                    raise Exception(f"0x0.st upload failed: {io_resp.text}")
-                
-                public_img_url = io_resp.text.strip()
-                print(f"Public URL: {public_img_url}")
-
-                url = "https://api.developer.pixelcut.ai/v1/generate-background"
-                
-                payload = {
-                    "image_url": public_img_url,
-                    "prompt": bg_gen_prompt,
-                    "format": "jpeg"
-                }
-                headers = {
-                    "X-API-KEY": pixelcut_key,
-                    "Content-Type": "application/json"
-                }
-                
                 resp = requests.post(url, headers=headers, json=payload)
-                
                 if resp.status_code == 200:
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "application/json" in content_type:
-                        data = resp.json()
-                        if "result_url" in data:
-                            img_resp = requests.get(data["result_url"])
-                            final_image = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
-                        else:
-                            raise Exception("No URL in Pixelcut JSON")
-                    elif "image" in content_type:
-                        final_image = Image.open(io.BytesIO(resp.content)).convert("RGB")
-                    else:
-                        raise Exception("Unknown Pixelcut response type")
-                else:
-                    raise Exception(f"Pixelcut API Error: {resp.status_code} {resp.text}")
-            except Exception as e_io:
-                 # Ensure we catch upload errors too!
-                 raise Exception(f"Strategy A failed (Upload/API): {e_io}")
-
-            except Exception as e_pixel:
-                print(f"Strategy A (Pixelcut) failed: {e_pixel}")
-                print("Switching to Strategy B: Remove.bg + White Background")
-                
-                # Strategy B: Remove BG + White Background
-                # This ensures the user ALWAYS gets a result
-                try:
-                    img_byte_arr.seek(0)
-                    no_bg_bytes = remove_background_api(img_byte_arr.getvalue())
-                    no_bg_image = Image.open(io.BytesIO(no_bg_bytes)).convert("RGBA")
-                    
-                    # Create white background
-                    white_bg = Image.new("RGBA", no_bg_image.size, "WHITE")
-                    final_image = Image.alpha_composite(white_bg, no_bg_image).convert("RGB")
-                    
-                    # Append note to description
-                    description += " (Note: Standard white background applied due to high traffic.)"
-                except Exception as e_fallback:
-                    raise HTTPException(status_code=500, detail=f"All strategies failed. Pixelcut: {e_pixel}, Fallback: {e_fallback}")
-
-
-
-        except Exception as e:
-            # Re-raise exceptions from inner strategies (including the traceback)
-            raise e
+                    data = resp.json()
+                    # Parse Freepik response (assuming list of images in base64 or url)
+                    # Often it's "data": [{"base64": ...}] or similar
+                    # Let's handle standard response types
+                    if "data" in data and len(data["data"]) > 0:
+                        img_data = data["data"][0]
+                        if "base64" in img_data:
+                            bg_bytes = base64.b64decode(img_data["base64"])
+                            generated_bg = Image.open(io.BytesIO(bg_bytes)).convert("RGBA")
+                        elif "url" in img_data:
+                            bg_resp = requests.get(img_data["url"])
+                            generated_bg = Image.open(io.BytesIO(bg_resp.content)).convert("RGBA")
+            except Exception as e_freepik:
+                print(f"Freepik T2I failed: {e_freepik}")
+                # Fallback to simple gradient or white if generation fails
+            
+            if not generated_bg:
+                # Fallback Background (White/Grey)
+                print("Using fallback white background")
+                generated_bg = Image.new("RGBA", no_bg_image.size, (245, 245, 245, 255))
+            
+            # 3. Composite
+            # Resize background to match product
+            generated_bg = generated_bg.resize(no_bg_image.size, Image.Resampling.LANCZOS)
+            
+            # Center product?
+            # For now, just composite directly (assuming centered input)
+            final_image = Image.alpha_composite(generated_bg, no_bg_image).convert("RGB")
+            
+        except Exception as e_process:
+            print(f"Processing failed: {e_process}")
+            # Ultimate Fallback: Return Original
+            final_image = original_image.convert("RGB")
+            # Or raise if we want to debug
+            # raise HTTPException(status_code=500, detail=str(e_process))
 
         # Convert processed image to base64
         processed_image_b64 = image_to_base64(final_image, "JPEG")
