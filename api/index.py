@@ -162,25 +162,25 @@ async def process_image(file: UploadFile = File(...)):
             
             print(f"Requesting Pixelcut with prompt: {bg_gen_prompt}")
             
-            # Prepare ORIGINAL image for upload (Pixelcut handles background removal)
-            img_byte_arr = io.BytesIO()
-            original_image.save(img_byte_arr, format='PNG')
-            img_byte_arr.seek(0)
+            # Prepare using Base64 Data URI (Safer for APIs expecting URLs)
+            # Some APIs accept data:image/... as a URL
+            img_b64 = image_to_base64(original_image, "PNG")
+            data_uri = f"data:image/png;base64,{img_b64}"
             
             url = "https://api.developer.pixelcut.ai/v1/generate-background"
             
             payload = {
+                "image_url": data_uri,
                 "prompt": bg_gen_prompt,
                 "format": "jpeg"
             }
-            files = {
-                "image": ("image.png", img_byte_arr, "image/png")
-            }
             headers = {
-                "X-API-KEY": pixelcut_key
+                "X-API-KEY": pixelcut_key,
+                "Content-Type": "application/json"
             }
             
-            resp = requests.post(url, headers=headers, data=payload, files=files)
+            # Use json parameter (automatically sets Content-Type and serializes body)
+            resp = requests.post(url, headers=headers, json=payload)
             
             if resp.status_code == 200:
                 content_type = resp.headers.get("Content-Type", "")
@@ -209,8 +209,8 @@ async def process_image(file: UploadFile = File(...)):
             
         except Exception as e:
             print(f"Background generation failed: {e}")
-            # Fallback: Just return original image if pixelcut fails (to avoid complete crash)
-            final_image = original_image.convert("RGB")
+            # Don't fail silently! Let the user know why it failed.
+            raise HTTPException(status_code=500, detail=f"Background Generation Failed: {str(e)}")
 
         # Convert processed image to base64
         processed_image_b64 = image_to_base64(final_image, "JPEG")
