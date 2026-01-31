@@ -97,13 +97,16 @@ async def process_image(file: UploadFile = File(...)):
         # Convert image for Gemini (it accepts PIL Image directly)
         description_image = original_image.convert("RGB")
         
-        analysis_prompt = \"\"\"Analyze this handmade craft product image and generate:
-1. A brief e-commerce description (2-3 sentences).
-2. A short, specific prompt to generate a matching professional background for this product (e.g. "marble table", "wooden desk", "soft fabric").
-
-Format:
-Description: [Description]
-Background Prompt: [Prompt]\"\"\"
+        # Using simple string concatenation to avoid syntax errors in tool writing
+        analysis_prompt = (
+            "Analyze this handmade craft product image and generate:\n"
+            "1. A brief e-commerce description (2-3 sentences).\n"
+            "2. A short, specific prompt to generate a matching professional background for this product (e.g. 'marble table', 'wooden desk', 'soft fabric').\n"
+            "\n"
+            "Format:\n"
+            "Description: [Description]\n"
+            "Background Prompt: [Prompt]"
+        )
 
         try:
             # Run Gemini in thread to avoid blocking event loop
@@ -121,10 +124,12 @@ Background Prompt: [Prompt]\"\"\"
         
         if analysis_text:
             try:
-                lines = analysis_text.split('\\n')
+                # Use splitlines for safer parsing
+                lines = analysis_text.splitlines()
                 desc_lines = []
                 capture_desc = False
                 for line in lines:
+                    line = line.strip()
                     if line.startswith("Description:"):
                         capture_desc = True
                         desc_lines.append(line.replace("Description:", "").strip())
