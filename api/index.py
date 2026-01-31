@@ -209,6 +209,9 @@ async def process_image(file: UploadFile = File(...)):
                         raise Exception("Unknown Pixelcut response type")
                 else:
                     raise Exception(f"Pixelcut API Error: {resp.status_code} {resp.text}")
+            except Exception as e_io:
+                 # Ensure we catch upload errors too!
+                 raise Exception(f"Strategy A failed (Upload/API): {e_io}")
 
             except Exception as e_pixel:
                 print(f"Strategy A (Pixelcut) failed: {e_pixel}")
