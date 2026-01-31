@@ -93,7 +93,7 @@ async def process_image(file: UploadFile = File(...)):
         
         # Step 1: Generate description and background prompt using Gemini
         print("Starting Gemini analysis...")
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         
         # Convert image for Gemini (it accepts PIL Image directly)
         description_image = original_image.convert("RGB")
