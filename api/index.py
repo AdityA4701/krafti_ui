@@ -162,74 +162,79 @@ async def process_image(file: UploadFile = File(...)):
             
             print(f"Requesting Pixelcut with prompt: {bg_gen_prompt}")
             
-            # Prepare image buffer
-            img_byte_arr = io.BytesIO()
-            original_image.save(img_byte_arr, format='PNG')
-            img_byte_arr.seek(0)
-            
-            # WORKAROUND: Pixelcut requires a public URL. 
-            # We use file.io for a temporary, one-time public link.
-            print("Uploading to temporary host (file.io) to get a public URL...")
+            # Strategy A: Try Pixelcut with 0x0.st hosting
             try:
-                files_io = {"file": ("image.png", img_byte_arr, "image/png")}
-                io_resp = requests.post("https://file.io?expires=1d", files=files_io)
-                
-                if io_resp.status_code == 200:
-                    public_img_url = io_resp.json().get("link")
-                    print(f"File.io Link: {public_img_url}")
-                else:
-                    print(f"File.io failed: {io_resp.text}")
-                    # Fallback to previous data URI method just in case, though it likely failed
-                    img_b64 = image_to_base64(original_image, "PNG")
-                    public_img_url = f"data:image/png;base64,{img_b64}"
-            except Exception as e_io:
-                 print(f"File.io upload exception: {e_io}")
-                 raise Exception("Failed to create public URL for image")
+                # Prepare image buffer
+                img_byte_arr = io.BytesIO()
+                original_image.save(img_byte_arr, format='PNG')
+                img_byte_arr.seek(0)
 
-            url = "https://api.developer.pixelcut.ai/v1/generate-background"
-            
-            payload = {
-                "image_url": public_img_url,
-                "prompt": bg_gen_prompt,
-                "format": "jpeg"
-            }
-            headers = {
-                "X-API-KEY": pixelcut_key,
-                "Content-Type": "application/json"
-            }
-            
-            # Use json parameter (automatically sets Content-Type and serializes body)
-            resp = requests.post(url, headers=headers, json=payload)
-            
-            if resp.status_code == 200:
-                content_type = resp.headers.get("Content-Type", "")
-                if "application/json" in content_type:
-                    data = resp.json()
-                    if "result_url" in data:
-                        img_url = data["result_url"]
-                        img_resp = requests.get(img_url)
-                        final_image = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
-                    elif "image_url" in data:
-                        img_url = data["image_url"]
-                        img_resp = requests.get(img_url)
-                        final_image = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
-                    else:
-                        raise Exception("Pixelcut returned no image URL")
-                elif "image" in content_type:
-                     final_image = Image.open(io.BytesIO(resp.content)).convert("RGB")
-                else:
-                     try:
+                print("Uploading to 0x0.st...")
+                # 0x0.st is a reliable file dump
+                files_io = {"file": ("image.png", img_byte_arr, "image/png")}
+                io_resp = requests.post("https://0x0.st", files=files_io)
+                
+                if io_resp.status_code != 200:
+                    raise Exception(f"0x0.st upload failed: {io_resp.text}")
+                
+                public_img_url = io_resp.text.strip()
+                print(f"Public URL: {public_img_url}")
+
+                url = "https://api.developer.pixelcut.ai/v1/generate-background"
+                
+                payload = {
+                    "image_url": public_img_url,
+                    "prompt": bg_gen_prompt,
+                    "format": "jpeg"
+                }
+                headers = {
+                    "X-API-KEY": pixelcut_key,
+                    "Content-Type": "application/json"
+                }
+                
+                resp = requests.post(url, headers=headers, json=payload)
+                
+                if resp.status_code == 200:
+                    content_type = resp.headers.get("Content-Type", "")
+                    if "application/json" in content_type:
+                        data = resp.json()
+                        if "result_url" in data:
+                            img_resp = requests.get(data["result_url"])
+                            final_image = Image.open(io.BytesIO(img_resp.content)).convert("RGB")
+                        else:
+                            raise Exception("No URL in Pixelcut JSON")
+                    elif "image" in content_type:
                         final_image = Image.open(io.BytesIO(resp.content)).convert("RGB")
-                     except:
-                        raise Exception("Pixelcut returned unknown format")
-            else:
-                 print(f"Pixelcut API error: {resp.status_code} - {resp.text}")
-                 raise Exception(f"Pixelcut API Error: {resp.status_code}")
-            
+                    else:
+                        raise Exception("Unknown Pixelcut response type")
+                else:
+                    raise Exception(f"Pixelcut API Error: {resp.status_code} {resp.text}")
+
+            except Exception as e_pixel:
+                print(f"Strategy A (Pixelcut) failed: {e_pixel}")
+                print("Switching to Strategy B: Remove.bg + White Background")
+                
+                # Strategy B: Remove BG + White Background
+                # This ensures the user ALWAYS gets a result
+                try:
+                    img_byte_arr.seek(0)
+                    no_bg_bytes = remove_background_api(img_byte_arr.getvalue())
+                    no_bg_image = Image.open(io.BytesIO(no_bg_bytes)).convert("RGBA")
+                    
+                    # Create white background
+                    white_bg = Image.new("RGBA", no_bg_image.size, "WHITE")
+                    final_image = Image.alpha_composite(white_bg, no_bg_image).convert("RGB")
+                    
+                    # Append note to description
+                    description += " (Note: Standard white background applied due to high traffic.)"
+                except Exception as e_fallback:
+                    raise HTTPException(status_code=500, detail=f"All strategies failed. Pixelcut: {e_pixel}, Fallback: {e_fallback}")
+
+
+
         except Exception as e:
-            print(f"Background generation failed: {e}")
-            # Don't fail silently! Let the user know why it failed.
-            raise HTTPException(status_code=500, detail=f"Background Generation Failed: {str(e)}")
+            # Re-raise exceptions from inner strategies (including the traceback)
+            raise e
 
         # Convert processed image to base64
         processed_image_b64 = image_to_base64(final_image, "JPEG")
