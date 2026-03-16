@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './firebase';
 import Auth from './pages/Auth';
+import StartupIdeas from './pages/StartupIdeas';
 import './App.css';
 
 const API_URL = 'https://krafti-backend.onrender.com';
@@ -642,6 +643,7 @@ function Home() {
           </div>
           <p className="footer-tagline">Transform your craft photos into e-commerce ready products with AI</p>
           <div className="footer-links">
+            <Link to="/startup-ideas">Startup Ideas</Link>
             <a href="#">About</a>
             <a href="#">Privacy</a>
             <a href="#">Terms</a>
@@ -662,6 +664,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/auth" element={<Auth />} />
+        <Route path="/startup-ideas" element={<StartupIdeas />} />
       </Routes>
     </Router>
   );
